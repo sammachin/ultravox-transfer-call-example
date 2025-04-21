@@ -22,7 +22,9 @@ const service = ({logger, makeService}) => {
                 .on('/event', onEvent.bind(null, session))
                 .on('/final', onFinal.bind(null, session))
                 .on('close', onClose.bind(null, session))
-                .on('error', onError.bind(null, session));
+                .on('error', onError.bind(null, session))
+                .on('/toolCall', onToolCall.bind(null, session))
+                .on('/dialAction', dialAction.bind(null, session));
         
             session
                 .pause({length: 1.5})
@@ -34,8 +36,9 @@ const service = ({logger, makeService}) => {
                     },
                     actionHook: '/final',
                     eventHook: '/event',
+                    toolHook: '/toolCall',
                     llmOptions: {
-                        systemPrompt: 'You are an agent named Karen. Greet the user and ask how you can help.',
+                        systemPrompt: 'You are an agent named Karen. You can help the caller with simple questions or transfer them to a human agent. Be brief.',
                         firstSpeaker: 'FIRST_SPEAKER_AGENT',
                         initialMessages: [{
                             medium: 'MESSAGE_MEDIUM_VOICE',
@@ -44,6 +47,15 @@ const service = ({logger, makeService}) => {
                         model: 'fixie-ai/ultravox',
                         voice: 'Tanya-English',
                         transcriptOptional: true,
+                        selectedTools: [
+                            {
+                                temporaryTool: {
+                                    modelToolName: 'call-transfer',
+                                    description: 'Transfers the call to a human agent',
+                                    client: {}
+                                }
+                            }
+                          ],
                     }
                 })
                 .hangup()
@@ -92,6 +104,64 @@ const onError = (session, err) => {
     const {logger} = session.locals;
     logger.info({err}, `session ${session.call_sid} received error`);
 };
+
+const onToolCall = async(session, evt) => {
+    const {logger} = session.locals;
+  
+    const {name, args, tool_call_id} = evt;
+    const {callSid} = args;
+    logger.info({evt}, `got toolHook for ${name} with tool_call_id ${tool_call_id}`);
+  
+    try {
+        const data = {
+            type: 'client_tool_result',
+            invocation_id: tool_call_id,
+            result: "Successfully transferred call to agent, telling user to wait for a moment.",
+        };
+    
+        setTimeout(() => {
+            session.sendCommand('redirect', [
+                {
+                    verb: 'say',
+                    text: 'Please wait while I connect your call'
+                },
+                {
+                    verb: 'dial',
+                    actionHook: '/dialAction',
+                    callerId: process.env.HUMAN_AGENT_CALLERID,
+                    target: [
+                        {
+                            type: 'phone',
+                            number: process.env.HUMAN_AGENT_NUMBER,
+                            trunk: process.env.HUMAN_AGENT_TRUNK
+                        }
+                    ]
+                }
+            ]);
+        }, 5000);
+    
+        session.sendToolOutput(tool_call_id, data);
+  
+    } catch (err) {
+        logger.info({err}, 'error transferring call');
+        const data = {
+            type: 'client_tool_result',
+            invocation_id: tool_call_id,
+            error_message: 'Failed to transfer call'
+        };
+        session.sendToolOutput(tool_call_id, data);
+    }
+};
+
+const dialAction = async(session, evt) => {
+    const {logger} = session.locals;
+    logger.info(`dialAction: `);
+    console.log(evt);
+    session
+        .say({text: "The call with a human agent has ended"})
+        .hangup()
+        .reply();
+}
 
 module.exports = service;
 service({logger, makeService});  

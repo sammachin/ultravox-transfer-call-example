@@ -4,6 +4,7 @@
   "description": "Example jambonz app that integrates with Ultravox to transfer a call from AI agent to human agent.",
   "main": "index.js",
   "scripts": {
+    "start": "node index.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
